@@ -6,8 +6,6 @@ from datetime import datetime
 
 sample_Files = os.listdir("mapSamples")
 
-REMOVE_DISCONNECTED_ROOMS = False
-
 SAMPLE_SIZE = 10
 MAP_WIDTH = 10
 MAP_HEIGHT = 10
@@ -53,15 +51,15 @@ for i in range(MAP_HEIGHT):
         row.append(samples[0])
     map.append(row)
 
-covered = numpy.zeros((MAP_HEIGHT,MAP_WIDTH))
-
 def getFittingTile(i,j):
-    for candidate in samples:
+    for candidate in samples[1:]:
         if i == 0 and candidate[0,:].sum() > 0: continue #check top row
         if i == MAP_HEIGHT-1 and candidate[SAMPLE_LAST_INDEX,:].sum() > 0: continue #check bottom row
 
         if j == 0 and candidate[:,0].sum() > 0: continue #check left column
         if j == MAP_WIDTH-1 and candidate[:,SAMPLE_LAST_INDEX].sum() > 0: continue #check right column
+
+        # if (j > 0 or i > 0) and (candidate[:,0].sum() + candidate[0,:].sum() == 0): continue
 
         if j > 0:
             leftTile = map[i][j-1]
@@ -84,30 +82,86 @@ def getTile(i,j):
         if count > 1000: return getFittingTile(i,j)
         candidate = random.choice(samples)
         if i == 0 and candidate[0,:].sum() > 0: continue #check top row
-        if i == MAP_HEIGHT-1 and candidate[9,:].sum() > 0: continue #check bottom row
+        if i == MAP_HEIGHT-1 and candidate[SAMPLE_LAST_INDEX,:].sum() > 0: continue #check bottom row
 
         if j == 0 and candidate[:,0].sum() > 0: continue #check left column
-        if j == MAP_WIDTH-1 and candidate[:,9].sum() > 0: continue #check right column
+        if j == MAP_WIDTH-1 and candidate[:,SAMPLE_LAST_INDEX].sum() > 0: continue #check right column
+
+        # if (j > 0 or i > 0) and (candidate[:,0].sum() + candidate[0,:].sum() == 0): continue
 
         if j > 0:
             leftTile = map[i][j-1]
-            leftTileRightColumn = leftTile[:,9].tostring()
-            candidateLeftColumn = candidate[:,0].tostring()
-            if not (leftTileRightColumn == candidateLeftColumn): continue
+            leftTile_right = leftTile[:,SAMPLE_LAST_INDEX].tostring()
+            candidate_left = candidate[:,0].tostring()
+            if not (leftTile_right == candidate_left): continue
 
         if i > 0:
             upperTile = map[i-1][j]
-            upperTileBottomRow = upperTile[9,:].tostring()
-            candidateTopRow = candidate[0,:].tostring()
-            if not (upperTileBottomRow == candidateTopRow): continue
+            upperTile_bottom = upperTile[SAMPLE_LAST_INDEX,:].tostring()
+            candidate_top = candidate[0,:].tostring()
+            if not (upperTile_bottom == candidate_top): continue
         return candidate
 
+covered = numpy.zeros((MAP_HEIGHT,MAP_WIDTH))
 for i in range(MAP_HEIGHT):
     for j in range(MAP_WIDTH):
         map[i][j] = getTile(i,j)
         covered[i,j] = 1
         os.system("cls")
+        print(f"Generating map from samples: ({(covered.sum() / (MAP_HEIGHT*MAP_WIDTH)) * 100}% completed)")
+        print("Map Coverage Table of the generation process:")
         print(covered)
+
+connected = numpy.zeros((MAP_HEIGHT,MAP_WIDTH))
+connected[(int(MAP_HEIGHT/2)),int(MAP_WIDTH/2)] = 1
+
+scanForConnections = True
+print("scaning connected tiles...")
+while scanForConnections:
+    changes = 0
+    for i in range(MAP_HEIGHT):
+        for j in range(MAP_WIDTH):
+            currentTile = map[i][j]
+            top = currentTile[0,:]
+            botton = currentTile[SAMPLE_LAST_INDEX,:]
+            left = currentTile[:,0]
+            right = currentTile[:,SAMPLE_LAST_INDEX]
+            if i > 0:
+                upperTile = map[i-1][j]
+                upperTile_bottom = upperTile[SAMPLE_LAST_INDEX,:]
+                if (connected[i,j] == 0 and connected[i-1,j]==1 and upperTile_bottom.sum() + top.sum() >0):
+                    connected[i,j] = 1
+                    changes+=1
+            if j > 0:
+                leftTile = map[i][j-1]
+                leftTile_right = leftTile[:,SAMPLE_LAST_INDEX]
+                if (connected[i,j] == 0 and connected[i,j-1]==1) and leftTile_right.sum() + left.sum() > 0:
+                    connected[i,j] = 1
+                    changes+=1
+            if i < MAP_HEIGHT-1:
+                lowerTile = map[i+1][j]
+                lowerTile_top = lowerTile[0,:]
+                if (connected[i,j] == 0 and connected[i+1,j]==1) and lowerTile_top.sum() + botton.sum() > 0:
+                    connected[i,j] = 1
+                    changes+=1
+            if j < MAP_WIDTH-1:
+                rightTile = map[i][j+1]
+                rightTile_left = rightTile[:,0]
+                if(connected[i,j] == 0 and connected[i,j+1] == 1) and rightTile_left.sum() + right.sum() > 0:
+                    connected[i,j]=1
+                    changes+=1
+    if changes == 0:
+        scanForConnections=False
+    print(f"{connected.sum()} tiles connected")
+
+print("Connection matrix: ")
+print(connected)
+print("proceeding into cleaning unconnected tiles")
+for i in range(MAP_HEIGHT):
+    for j in range(MAP_WIDTH):
+        if connected[i,j] == 0: map[i][j] = samples[0]
+
+print("proceeding into creating map preview")
 
 PREVIEW_HEIGT = MAP_HEIGHT * SAMPLE_SIZE
 PREVIEW_WIDTH = MAP_WIDTH * SAMPLE_SIZE
@@ -120,27 +174,6 @@ for i in range(MAP_HEIGHT):
         x0 = j * SAMPLE_SIZE
         x1 = (j+1) * SAMPLE_SIZE
         preview[y0:y1 , x0:x1] = map[i][j]
-
-def removeDisconnectedRooms(preview):
-    analysis = cv2.connectedComponentsWithStats(preview, 4, cv2.CV_32S) 
-    (totalLabels, label_ids, values, centroid) = analysis
-    maxArea = 0
-    maxAreaId = -1
-    for i in range(1, totalLabels):
-        area = values[i, cv2.CC_STAT_AREA]
-        if area > maxArea:
-            maxAreaId = i
-            maxArea = area
-
-    output = preview
-    for i in range(1, totalLabels):
-        area = values[i, cv2.CC_STAT_AREA]
-        if area < maxArea:
-            componentMask = (label_ids == i).astype("uint8")*255
-            output = output - componentMask
-    return output
-
-if REMOVE_DISCONNECTED_ROOMS: preview = removeDisconnectedRooms(preview)
 
 genDate = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
 cv2.imwrite(f"previews/preview{genDate}.png",preview)
